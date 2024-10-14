@@ -17,28 +17,8 @@ function getCategoryName($category_id, $conn) {
     return $category_name;
 }
 
-// Function to insert job data into the 'jobs' table
-function insertJob($title, $description, $image, $category_id, $location, $price, $phone, $due_date, $posted_date, $conn) {
-    // Prepare the SQL insert statement
-    $stmt = $conn->prepare("INSERT INTO jobs (title, description, image, category_id, location, price, phone, due_date, posted_date) 
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    
-    // Bind the parameters to the SQL query
-    $stmt->bind_param("sssisddss", $title, $description, $image, $category_id, $location, $price, $phone, $due_date, $posted_date);
-
-    // Execute the query and check for errors
-    if ($stmt->execute()) {
-        return ['status' => 'success', 'message' => 'Job posted successfully!'];
-    } else {
-        return ['status' => 'error', 'message' => 'Error posting job: ' . $conn->error];
-    }
-
-    // Close the statement
-    $stmt->close();
-}
-
 // Function to send the job post email to all registered users
-function sendJobPostEmail($jobTitle, $jobDescription, $image, $category_id, $location, $price, $phone, $due_date, $posted_date, $conn) {
+function sendJobPostEmail($jobTitle, $jobDescription, $image, $category_id, $location, $phone, $due_date, $posted_date, $conn) {
     // Fetch the category name using the category ID
     $category_name = getCategoryName($category_id, $conn);
 
@@ -60,7 +40,7 @@ function sendJobPostEmail($jobTitle, $jobDescription, $image, $category_id, $loc
                 $mail->Host = 'smtp.gmail.com';            // Use Gmail SMTP server
                 $mail->SMTPAuth = true;
                 $mail->Username = 'prabud0401@gmail.com';  // Your Gmail address
-                $mail->Password = 'rype qpim qzdw vfnd';   // Gmail App password
+                $mail->Password = 'rype qpim qzdw vfnd';     // Gmail App password
                 $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
                 $mail->Port = 587;
 
@@ -87,7 +67,6 @@ function sendJobPostEmail($jobTitle, $jobDescription, $image, $category_id, $loc
                                 <p><strong>Description:</strong> ' . $jobDescription . '</p>
                                 <p><strong>Category:</strong> ' . $category_name . '</p>
                                 <p><strong>Location:</strong> ' . $location . '</p>
-                                <p><strong>Price:</strong> $' . $price . '</p>
                                 <p><strong>Phone:</strong> ' . $phone . '</p>
                                 <p><strong>Due Date:</strong> ' . $due_date . '</p>
                                 <p><strong>Posted Date:</strong> ' . $posted_date . '</p>
@@ -113,62 +92,74 @@ function sendJobPostEmail($jobTitle, $jobDescription, $image, $category_id, $loc
     }
 }
 
-// Handle AJAX request for job posting
+// Include the database connection file
+include './db_connection.php';
+session_start();
+
+if (!isset($_SESSION['email'])) {
+    echo "User is not logged in.";
+    exit();
+}
+
+$email = $_SESSION['email'];
+
+// Fetch the logged-in user's id
+$user_query = $conn->prepare("SELECT id FROM users WHERE email = ?");
+$user_query->bind_param("s", $email);
+$user_query->execute();
+$user_query->bind_result($user_id);
+$user_query->fetch();
+$user_query->close();
+
+if (!$user_id) {
+    echo "User profile not found.";
+    exit();
+}
+
+// Check if form data is received
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $title = $_POST['title'];
     $description = $_POST['description'];
     $category_id = $_POST['category_id'];
     $location = $_POST['location'];
-    $price = $_POST['price'];
     $phone = $_POST['phone'];
     $due_date = $_POST['due_date'];
-    $posted_date = date('Y-m-d H:i:s');
     $image = '';
+    $posted_date = date('Y-m-d H:i:s');
 
-    // Validate form input
-    if (empty($title) || empty($description) || empty($category_id) || empty($location) || empty($price) || empty($phone) || empty($due_date)) {
-        echo json_encode(['status' => 'error', 'message' => 'All fields are required.']);
-        exit();
-    }
-    
-    // Check for image upload or image link
+    // Handle image upload
     if (isset($_FILES['image']) && $_FILES['image']['error'] == 0) {
-        // Image file upload
         $target_dir = "../uploads/";
         $target_file = $target_dir . basename($_FILES['image']['name']);
         $imageFileType = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
 
-        // Check if file is an actual image
-        $check = getimagesize($_FILES['image']['tmp_name']);
-        if ($check !== false) {
+        if (getimagesize($_FILES['image']['tmp_name']) !== false) {
             if (move_uploaded_file($_FILES['image']['tmp_name'], $target_file)) {
-                $image = $target_file;  // Use uploaded file path as image
+                $image = $target_file;
             } else {
-                echo json_encode(['status' => 'error', 'message' => 'Error uploading the image.']);
+                echo "Error uploading the image.";
                 exit();
             }
         } else {
-            echo json_encode(['status' => 'error', 'message' => 'File is not an image.']);
+            echo "File is not an image.";
             exit();
         }
-    } elseif (!empty($_POST['image_link'])) {
-        // Image URL provided
-        $image = $_POST['image_link'];  // Use URL as image
+    }
+
+    // Prepare the SQL insert statement
+    $stmt = $conn->prepare("INSERT INTO jobs (user_id, title, description, image, category_id, location, phone, due_date, posted_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("isssissss", $user_id, $title, $description, $image, $category_id, $location, $phone, $due_date, $posted_date);
+
+    if ($stmt->execute()) {
+        // Send email notification after successfully posting the job
+        sendJobPostEmail($title, $description, $image, $category_id, $location, $phone, $due_date, $posted_date, $conn);
+        echo "Job posted successfully and notifications sent!";
     } else {
-        echo json_encode(['status' => 'error', 'message' => 'You must provide an image or an image link.']);
-        exit();
+        echo "Error posting job: " . $conn->error;
     }
 
-    // Insert job data into the database
-    $result = insertJob($title, $description, $image, $category_id, $location, $price, $phone, $due_date, $posted_date, $conn);
-
-    // Send the job post email to all registered users if job was posted successfully
-    if ($result['status'] === 'success') {
-        sendJobPostEmail($title, $description, $image, $category_id, $location, $price, $phone, $due_date, $posted_date, $conn);
-    }
-
-    // Return the result as JSON
-    echo json_encode($result);
-    exit();
+    $stmt->close();
 }
+
+$conn->close();
 ?>
